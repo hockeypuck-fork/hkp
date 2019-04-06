@@ -30,10 +30,10 @@ import (
 	"github.com/julienschmidt/httprouter"
 	gc "gopkg.in/check.v1"
 
-	"github.com/hockeypuck/testing"
-	"gopkg.in/hockeypuck/openpgp.v1"
+	"github.com/schmorrison/testing"
+	"gopkg.in/schmorrison/openpgp.v1"
 
-	"gopkg.in/hockeypuck/hkp.v1/storage/mock"
+	"gopkg.in/schmorrison/hkp.v1/storage/mock"
 )
 
 func Test(t *stdtesting.T) { gc.TestingT(t) }

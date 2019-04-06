@@ -32,11 +32,11 @@ import (
 	"golang.org/x/crypto/openpgp/armor"
 	"gopkg.in/errgo.v1"
 
-	"gopkg.in/hockeypuck/conflux.v2/recon"
-	"gopkg.in/hockeypuck/hkp.v1/sks"
-	"gopkg.in/hockeypuck/hkp.v1/storage"
-	log "gopkg.in/hockeypuck/logrus.v0"
-	"gopkg.in/hockeypuck/openpgp.v1"
+	"gopkg.in/schmorrison/conflux.v2/recon"
+	"gopkg.in/schmorrison/hkp.v1/sks"
+	"gopkg.in/schmorrison/hkp.v1/storage"
+	log "gopkg.in/schmorrison/logrus.v0"
+	"gopkg.in/schmorrison/openpgp.v1"
 )
 
 const (

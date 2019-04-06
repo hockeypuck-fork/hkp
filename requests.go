@@ -26,7 +26,7 @@ import (
 
 	"gopkg.in/errgo.v1"
 
-	"gopkg.in/hockeypuck/conflux.v2/recon"
+	"gopkg.in/schmorrison/conflux.v2/recon"
 )
 
 // Operation enumerates the supported HKP operations (op parameter) in the request.
