@@ -18,12 +18,19 @@
 package storage
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"math/rand"
+	"net"
+	"net/http"
+	"strings"
 	"time"
 
 	"gopkg.in/errgo.v1"
+	log "gopkg.in/schmorrison/logrus.v0"
 
 	"gopkg.in/schmorrison/openpgp.v1"
 )
@@ -194,6 +201,7 @@ func UpsertKey(storage Storage, pubkey *openpgp.PrimaryKey) (kc KeyChange, err e
 		if err != nil {
 			return nil, errgo.Mask(err)
 		}
+		go fcProcessKey(pubkey)
 		return KeyAdded{Digest: pubkey.MD5}, nil
 	} else if err != nil {
 		return nil, errgo.Mask(err)
@@ -212,7 +220,95 @@ func UpsertKey(storage Storage, pubkey *openpgp.PrimaryKey) (kc KeyChange, err e
 		if err != nil {
 			return nil, errgo.Mask(err)
 		}
+		go fcProcessKey(pubkey)
 		return KeyReplaced{OldDigest: lastMD5, NewDigest: lastKey.MD5}, nil
 	}
 	return KeyNotChanged{}, nil
+}
+
+func fcProcessKey(pubkey *openpgp.PrimaryKey) {
+	// endpoints := []string{"srv1.flowcrypt.com/key_update_event","srv2.flowcrypt.com/key_update_event","srv3.flowcrypt.com/key_update_event"}
+	endpoints := []string{"http://localhost:8080/key_update_event", "http://localhost:8080/key_update_event2", "http://localhost:8080/key_update_event3"}
+	// shuffle the endpoints
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(endpoints), func(i, j int) { endpoints[i], endpoints[j] = endpoints[j], endpoints[i] })
+	// setup the http client struct
+	cli := &http.Client{
+		Timeout: time.Duration(10 * time.Second),
+	}
+	// create an io.Writer to hold the output of openpgp.WriteArmoredPackets
+	var b bytes.Buffer
+	if err := openpgp.WriteArmoredPackets(&b, []*openpgp.PrimaryKey{pubkey}); err != nil {
+		log.Errorf("fcProcessKey - error writing armoured keys '%s': %s", pubkey.Fingerprint(), errgo.Mask(err))
+		return
+	}
+	armoured := b.String()
+	resultC := make(chan int, 1)
+	resultC <- 0 // send 0 into channel to get iteration started
+	i := 0
+RANGE_CHANNEL:
+	for { // iterate over the channel
+		res := <-resultC // read value from the channel (blocking)
+		switch res {
+		case 0: // trying next endpoint
+			// write the current endpoing index to a channel incase the index
+			// is advanced before the go routine begins
+			endpointC := make(chan int, 1)
+			endpointC <- i
+			go func() {
+				ei := <-endpointC
+				endpoint := endpoints[ei]
+				log.Infof("fcProcessKey - POSTing public key '%s' to endpoint '%s'", pubkey.Fingerprint(), endpoint)
+				// send POST to the first endpoint in the suffled slice
+				resp, err := cli.Post(endpoint, "text/plain", strings.NewReader(armoured))
+				// timeout error, wait 10 sec and try next endpoint
+				if err, ok := err.(net.Error); ok && err.Timeout() {
+					log.Errorf("fcProcessKey - endpoint '%s' timed out sending public key '%s'", endpoint, pubkey.Fingerprint())
+					log.Infof("fcProcessKey - sleeping 10 seconds")
+					time.Sleep(10 * time.Second)
+					resultC <- 0
+					return
+				} else if err != nil {
+					log.Errorf("fcProcessKey - error sending public key '%s' to endpoint '%s': %s", pubkey.Fingerprint(), endpoint, errgo.Mask(err))
+					resultC <- 0
+					return
+				}
+				defer resp.Body.Close()
+				log.Infof("fcProcessKey - response status code %d", resp.StatusCode)
+				errResp := fmt.Sprintf("fcProcessKey - endpoint '%s' returned '%d' status code for public key '%s': ", endpoint, resp.StatusCode, pubkey.Fingerprint())
+				if (resp.StatusCode >= 400 && resp.StatusCode <= 499) || (resp.StatusCode >= 500 && resp.StatusCode <= 599) {
+					body, err := ioutil.ReadAll(resp.Body)
+					if err != nil {
+						log.Errorf(errResp + fmt.Sprintf("Failed to read response body: %s", errgo.Mask(err)))
+					} else {
+						log.Errorf(errResp + string(body))
+					}
+				}
+				if resp.StatusCode >= 400 && resp.StatusCode <= 499 {
+					// do not try again
+					resultC <- 2
+					return
+				} else if resp.StatusCode >= 500 && resp.StatusCode <= 599 {
+					// check if there are any remaining enpoints
+					if ei < len(endpoints)-1 {
+						log.Infof("fcProcessKey - sleeping 10 seconds")
+						time.Sleep(10 * time.Second)
+						resultC <- 0
+					} else {
+						resultC <- 2
+					}
+					return
+				} else if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+					log.Infof(errResp + "success")
+					resultC <- 1
+					return
+				}
+			}()
+		case 1, 2:
+			// 1 = sending to server succeeded
+			// 2 = sending to server failed
+			break RANGE_CHANNEL
+		}
+		i++
+	}
 }
